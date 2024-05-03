@@ -27,7 +27,7 @@
 		"onView:tab-session-explorer-view",
 		"onView:tab-session-own-view"
 	],
-	"main": "./out/src/extension",
+	"main": "./out/extension.js",
 	"icon": "media/tabgrp.png",
 	"contributes": {
 		"viewsContainers": {
@@ -67,17 +67,20 @@
 					"markdownDescription": "Specifies the directory in which the tab-group data is stored. Useful for portable VSCode deployment."
 				},
 				"tab-session.extraDataLocation": {
-					"type":"array",
+					"type": "array",
 					"default": [],
 					"items": {
-						"type":"string",
+						"type": "string",
 						"format": "uri"
 					},
 					"markdownDescription": "Specifies extra data source for the tab-groups, this could be used to display workspace specific along with user specific tab-groups. These values should be specified as uri ex.: `file:///home/user/username/tab-data.json`"
 				},
 				"tab-session.defaultOpenAction": {
 					"type": "string",
-					"enum": ["Replace", "Merge"],
+					"enum": [
+						"Replace",
+						"Merge"
+					],
 					"default": "Replace",
 					"markdownDescription": "How the tab/groups are opened:\n`Replace` closes other tabs before opening the tabs of the clicked group.\n`Merge` merges the tabs with the already open tabs."
 				},
@@ -163,7 +166,7 @@
 			},
 			{
 				"command": "tab-session.duplicate_tab_group",
-				"title": "Duplicate Group"	
+				"title": "Duplicate Group"
 			}
 		],
 		"menus": {
@@ -240,10 +243,9 @@
 	},
 	"scripts": {
 		"pretest": "npm run compile && npm run lint",
+		"compile": "rollup -c config.tabgroups.mjs",
 		"lint": "eslint src --ext ts",
 		"test": "node ./out/test/runTest.js"
-	},
-	"dependencies": {
 	},
 	"devDependencies": {
 		"@types/fs-extra": "^9.0.6",
@@ -256,6 +258,7 @@
 		"eslint": "^7.15.0",
 		"glob": "^7.1.6",
 		"mocha": "^10.1.0",
+		"rollup": "^4.17.2",
 		"typescript": "^4.1.2",
 		"vscode-test": "^1.4.1"
 	},
