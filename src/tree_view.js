@@ -1,24 +1,23 @@
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.TabGroupTreeItem = exports.TabGroupTreeProvider = exports.uriToLocalPath = void 0;
-const vscode = require("vscode");
-const fs = require("fs");
-const path = require("path");
-const extension_1 = require("./extension");
-const Utils = extension_1.Utils;
 // import { utils } from 'mocha';
-function uriToLocalPath(uri) {
+import { workspace, window, TreeItem, EventEmitter, TreeItemCollapsibleState, ThemeIcon, Uri } from 'vscode';
+import { default as fs } from 'node:fs';
+import { default as path } from 'node:path';
+import { Utils } from "./utils.js";
+import { TabViewColumn, TabGroupDTO, asyncSaveData } from "./data-model.js";
+
+export function uriToLocalPath(uri) {
     if (uri.scheme == "file" || uri.scheme == "vscode-local")
         return uri.fsPath;
     else
         return uri.scheme + ':' + uri.fsPath;
 }
-exports.uriToLocalPath = uriToLocalPath;
-function expandListGroups() {
-    return vscode.workspace.getConfiguration("tab-session").get('expandListGroups', true);
+
+export function expandListGroups() {
+    return workspace.getConfiguration("tab-session").get('expandListGroups', true);
 }
-function truncatePath(path, length) {
-    let maxLength = length !== null && length !== void 0 ? length : vscode.workspace.getConfiguration("tab-session").get('maxTooltipLength', 100);
+
+export function truncatePath(path, length) {
+    let maxLength = length !== null && length !== void 0 ? length : workspace.getConfiguration("tab-session").get('maxTooltipLength', 100);
     if (path && path.length > maxLength) {
         let prefixLength = 10;
         return path.substring(0, prefixLength) + "..." + path.substring(path.length - (maxLength - prefixLength - 3));
@@ -26,24 +25,24 @@ function truncatePath(path, length) {
     else
         return path;
 }
-class TabGroupTreeProvider {
+export class TabGroupTreeProvider {
     constructor(tabGroupDataStore) {
         this._tabGroupDataStore = tabGroupDataStore;
-        this._onDidChangeTreeData = new vscode.EventEmitter();
+        this._onDidChangeTreeData = new EventEmitter();
         this.onDidChangeTreeData = this._onDidChangeTreeData.event;
-        this.list_root_state = vscode.TreeItemCollapsibleState.Collapsed;
+        this.list_root_state = TreeItemCollapsibleState.Collapsed;
         this.dragMimeTypes = ["files", "application/vnd.code.uri-list"];
         this.dropMimeTypes = ["files", "application/vnd.code.uri-list", "codeeditors", "resourceurls", "text/uri-list"];
-        vscode.window.onDidChangeActiveTextEditor(editor => {
+        window.onDidChangeActiveTextEditor(editor => {
             // no need to do it so often
             // this._onDidChangeTreeData.fire();
         });
-        vscode.workspace.onDidChangeTextDocument(e => {
+        workspace.onDidChangeTextDocument(e => {
         });
     }
     refresh(collapseLists) {
         if (collapseLists) {
-            this.list_root_state = vscode.TreeItemCollapsibleState.Collapsed;
+            this.list_root_state = TreeItemCollapsibleState.Collapsed;
         }
         if (this.rootItem != null) {
             //this.noteNodeStates();
@@ -74,7 +73,7 @@ class TabGroupTreeProvider {
         console.log(source, dataTransfer, token);
 
         let ctx = source.context;
-        if (ctx instanceof extension_1.TabGroupDTO) {
+        if (ctx instanceof TabGroupDTO) {
             // group of tabs with or without view-columns
             let tabGroup = ctx;
             let items = tabGroup._items;
@@ -85,7 +84,7 @@ class TabGroupTreeProvider {
             dataTransfer.set("application/vnd.code.uri-list", new DataTransferItem(list));
             dataTransfer.set("text/uri-list", new DataTransferItem(list));
 
-        } else if (ctx.column && ctx.column instanceof extension_1.TabViewColumn) {
+        } else if (ctx.column && ctx.column instanceof TabViewColumn) {
             // group of tabs in split-view/view-column
             let tabGroup = ctx.group;
             let viewColumn = ctx.column;
@@ -123,13 +122,13 @@ class TabGroupTreeProvider {
 
             for (let i = 0; i < len; i++) {
                 let uri = urilist[i];
-                let newTab = extension_1.Utils.createTabObject(uri);
+                let newTab = Utils.createTabObject(uri);
                 let ctx = source.context;
-                if (ctx instanceof extension_1.TabGroupDTO) {
+                if (ctx instanceof TabGroupDTO) {
                     if (ctx._viewColumns && ctx._viewColumns.length > 0)
                         newTab.viewColumn = ctx._viewColumns[0];
                     ctx.addItem(newTab);
-                } else if (ctx.column && ctx.column instanceof extension_1.TabViewColumn) {
+                } else if (ctx.column && ctx.column instanceof TabViewColumn) {
                     newTab.viewColumn = ctx.column;
                     ctx.group.addItem(newTab);
                 } else {
@@ -138,7 +137,7 @@ class TabGroupTreeProvider {
                     this._tabGroupDataStore.insertBefore(newTab, ctx);
                 }
             }
-            extension_1.asyncSaveData();
+            asyncSaveData();
             this._onDidChangeTreeData.fire(null);
         }
     }
@@ -169,7 +168,7 @@ class TabGroupTreeProvider {
      */
     getTabGroupSubItem(tabGroup, isRoot) {
         
-        if (tabGroup instanceof extension_1.TabGroupDTO) {
+        if (tabGroup instanceof TabGroupDTO) {
             
             if (tabGroup._viewColumns && tabGroup._viewColumns.length > 1) {
                 let treeNodes = [];
@@ -179,7 +178,7 @@ class TabGroupTreeProvider {
                 for (let i = 0; i < len; i++) {
                     let item = items[i];
                     let columnItem = {group: tabGroup, column: item};
-                    let node = new TabGroupTreeItem("view column", vscode.TreeItemCollapsibleState.Collapsed, {
+                    let node = new TabGroupTreeItem("view column", TreeItemCollapsibleState.Collapsed, {
                         command: 'tab-session.open_view_column',
                         title: '',
                         tooltip: null,
@@ -188,7 +187,7 @@ class TabGroupTreeProvider {
                     node.tooltip = null;
                     node.resourceUri = "resourceUri";
                     node.description = "#" + item.id;
-                    node.iconPath = new  vscode.ThemeIcon("split-horizontal");
+                    node.iconPath = new  ThemeIcon("split-horizontal");
                     treeNodes.push(node);
                 }
                 
@@ -201,14 +200,14 @@ class TabGroupTreeProvider {
                 let len = items.length;
                 for (let i = 0; i < len; i++) {
                     let item = items[i];
-                    let node = new TabGroupTreeItem(item.name, vscode.TreeItemCollapsibleState.None, {
+                    let node = new TabGroupTreeItem(item.name, TreeItemCollapsibleState.None, {
                         command: 'tab-session.open',
                         title: '',
                         tooltip: truncatePath(item.uri),
                         arguments: [item],
                     }, null, item, null, "tab-group-item");
                     node.tooltip = truncatePath(item.uri);
-                    node.resourceUri = vscode.Uri.parse(item.uri);
+                    node.resourceUri = Uri.parse(item.uri);
                     node.description = true;
                     treeNodes.push(node);
                 }
@@ -216,7 +215,7 @@ class TabGroupTreeProvider {
                 return treeNodes;
             }
             
-        } else if (tabGroup.column && tabGroup.column instanceof extension_1.TabViewColumn) {
+        } else if (tabGroup.column && tabGroup.column instanceof TabViewColumn) {
             let treeNodes = [];
             let items = tabGroup.group._items;
             let viewColumn = tabGroup.column;
@@ -227,14 +226,14 @@ class TabGroupTreeProvider {
                     continue;
                 }
 
-                let node = new TabGroupTreeItem(item.name, vscode.TreeItemCollapsibleState.None, {
+                let node = new TabGroupTreeItem(item.name, TreeItemCollapsibleState.None, {
                     command: 'tab-session.open',
                     title: '',
                     tooltip: truncatePath(item.uri),
                     arguments: [item],
                 }, null, item, null, "tab-group-item");
                 node.tooltip = truncatePath(item.uri);
-                node.resourceUri = vscode.Uri.parse(item.uri);
+                node.resourceUri = Uri.parse(item.uri);
                 node.description = true;
                 treeNodes.push(node);
             }
@@ -247,18 +246,18 @@ class TabGroupTreeProvider {
     getTabGroupItem() {
         let nodes = [];
         let tabGroupDataStore = this._tabGroupDataStore;
-        let showFolderFiles = vscode.workspace.getConfiguration("tab-session").get('showFolderFiles', false);
+        let showFolderFiles = workspace.getConfiguration("tab-session").get('showFolderFiles', false);
         let groups = tabGroupDataStore._groups;
         let ylen = groups.length;
         for (let y = 0; y < ylen; y++) {
             let group = groups[y];
-            let collapsableState = vscode.TreeItemCollapsibleState.Collapsed;
+            let collapsableState = TreeItemCollapsibleState.Collapsed;
             let rootFolder = false;
             let node = new TabGroupTreeItem(group.name, collapsableState, null, null, group, rootFolder, "tab-group");
             node.command = {command: 'tab-session.open_tab_group', arguments: [node]};
             node.tooltip = "tooltip goes here";
             node.resourceUri = "resourceUri";
-            node.iconPath = new vscode.ThemeIcon("empty-window");
+            node.iconPath = new ThemeIcon("empty-window");
             nodes.push(node);
 
         }
@@ -267,8 +266,7 @@ class TabGroupTreeProvider {
     }
 }
 
-exports.TabGroupTreeProvider = TabGroupTreeProvider;
-class TabGroupTreeItem extends vscode.TreeItem {
+export class TabGroupTreeItem extends TreeItem {
     constructor(label, collapsibleState, command, children, context, rootFolder, contextValue) {
         super(label, collapsibleState);
         this.label = label;
@@ -284,6 +282,3 @@ class TabGroupTreeItem extends vscode.TreeItem {
 
 // for groups use $(empty-window)
 // for viewColumn use $(split-horizontal)
-
-exports.TabGroupTreeItem = TabGroupTreeItem;
-//# sourceMappingURL=tree_view.js.map

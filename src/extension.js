@@ -1,379 +1,13 @@
-'use strict';
-var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
-    function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
-    return new (P || (P = Promise))(function (resolve, reject) {
-        function fulfilled(value) { try { step(generator.next(value)); } catch (e) { reject(e); } }
-        function rejected(value) { try { step(generator["throw"](value)); } catch (e) { reject(e); } }
-        function step(result) { result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected); }
-        step((generator = generator.apply(thisArg, _arguments || [])).next());
-    });
-};
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.activate = exports.default_list_file_name = void 0;
-const vscode = require("vscode");
-const os = require("os");
-const path = require("path");
-const crypto = require("crypto");
-const fs = require("fs");
-const fsPromises = require("fs").fsPromises;
-const tree_view_1 = require("./tree_view.js");
-const vscode_1 = require("vscode");
 
-const TAB_GROUP_FILENAME = "tab-goups.localStorage.json";
+import { workspace, window, commands, Uri } from 'vscode';
+import { default as path } from 'node:path';
+import { default as crypto } from 'node:crypto';
+import { default as fs } from 'node:fs';
+import { default as fsPromises } from 'node:fs/promises';
+import { Utils } from "./utils.js";
+import { TabGroupTreeProvider } from './tree_view.js';
+import { TabGroupDataProvider, TabGroupLocalStorage, TabViewColumn, TabGroupDTO, TAB_GROUP_FILENAME, tab_groups_explicit_save } from "./data-model.js";
 
-/**
- * @typedef {TabGroupItem}
- * @type {Object}
- * @property {}
- */
-
-class TabGroupDataProvider {
-    constructor (groups) {
-        /** @type {TabGroupDTO} */
-        this._groups = Array.isArray(groups) ? groups : [];
-        /** @type {TabGroupLocalStorage} */
-        this._defaultStore = null;
-        this._defaultStorePath = null;
-        /** @type {TabGroupLocalStorage} */
-        this._stores = [];
-    }
-
-    get defaultStore() {
-        if (this._defaultStore == null) {
-            let store = new TabGroupLocalStorage([]);
-            store.dataLocation = this._defaultStorePath;
-            store._dataProvider = this;
-            this._defaultStore = store;
-            this._stores.push(store);
-        }
-
-        return this._defaultStore;
-    }   
-
-    /**
-     * 
-     * @param {TabGroupLocalStorage} store 
-     * @param {boolean} isDefault 
-     */
-    addStore(store, isDefault) {
-        let stores = this._stores;
-        let idx = stores.indexOf(store);
-        if (idx === -1) {
-            store._dataProvider = this;
-            stores.push(store);
-            let oldGroups = this._groups;
-            let newGroups = store._groups;
-            let len = newGroups.length;
-            for (let i = 0; i < len; i++) {
-                let group = newGroups[i];
-                if (typeof group._uuid != "string" || group._uuid.length == 0) {
-                    continue;
-                }
-                if (oldGroups.indexOf(group) === -1 && this.getTabGroupById(group._uuid) == null) {
-                    oldGroups.push(group);
-                }
-            }
-        }
-
-        if (isDefault === true)
-            this._defaultStore = store;
-    }
-
-    removeStore(store) {
-        let stores = this._stores;
-        let idx = stores.indexOf(store);
-        if (idx !== -1)
-            stores.splice(idx, 1);
-
-        if (this._defaultStore === store) {
-            this._defaultStore = null;
-        }
-    }
-
-    /**
-     * 
-     * @param {TabGroupDTO} group 
-     * @returns 
-     */
-    addGroup(group) {
-        let groups = this._groups;
-        if (groups.indexOf(group) !== -1)
-            return;
-        groups.push(group);
-    }
-
-    /**
-     * 
-     * @param {TabGroupDTO} group 
-     * @returns 
-     */
-    removeTabGroup(group) {
-        let groups = this._groups;
-        let index = groups.indexOf(group);
-        if (index !== -1)
-            groups.splice(index, 1);
-        group._storage.removeTabGroup(group);
-    }
-
-    /**
-     * 
-     * @param {TabGroupItem} newTab 
-     * @param {TabGroupItem} oldTab 
-     */
-    insertBefore(newTab, oldTab) {
-        let groups = this._groups;
-        let oldParent, oldIndex = -1;
-        let newParent, newIndex = -1;
-        let len = groups.length;
-        for (let i = 0; i < len; i++) {
-            let group = groups[i];
-            if (newIndex === -1) {
-                newIndex = group._items.indexOf(oldTab);
-                newParent = group;
-            }
-            if (oldIndex === -1) {
-                oldIndex = group._items.indexOf(newTab);
-                oldParent = group;
-            }
-            
-            if (newIndex !== -1 && oldIndex !== -1)
-                break;
-        }
-
-        if (newIndex === -1)
-            return;
-
-        if (oldIndex !== -1) {
-            oldParent._items.splice(oldIndex, 1);
-            oldParent._isDirty = true;
-            if (oldParent._storage)
-                oldParent._storage._isDirty = true;
-        }
-
-        newParent._items.splice(newIndex, 0, newTab);
-        newParent._isDirty = true;
-        if (newParent._storage)
-            newParent._storage._isDirty = true;
-    }
-
-    /**
-     * 
-     * @param {TabGroupItem} tab
-     */
-    removeTab(tab) {
-        let groups = this._groups;
-        let idx, len = groups.length;
-        for (let i = 0; i < len; i++) {
-            let group = groups[i];
-            idx = group._items.indexOf(tab);
-            if (idx !== -1) {
-                group._items.splice(idx, 1);
-                group.mtime = Date.now();
-                group._isDirty = true;
-                if (group._storage)
-                    group._storage._isDirty = true;
-                break;
-            }
-        }
-
-        return;
-    }
-
-    /**
-     * 
-     * @param {string} uuid 
-     * @returns {?TabGroupDTO}
-     */
-    getTabGroupById(uuid) {
-        let group, groups = this._groups;
-        let len = groups.length;
-        for (let i = 0; i < len; i++) {
-            group = groups[i];
-            if (group._uuid == uuid) {
-                return group;
-            }
-        }
-
-        return null;
-    }
-}
-
-class TabGroupLocalStorage {
-
-    constructor (groups) {
-        /** @type {TabGroupDTO} */
-        this._groups = Array.isArray(groups) ? groups : [];
-        /** @type {string} */
-        this.dataLocation = null;
-        /** @type {TabGroupDataProvider} */
-        this._dataProvider = null;
-        this._isDirty = false;
-    }
-
-    /**
-     * 
-     * @param {TabGroupDTO} group 
-     * @returns 
-     */
-    addGroup(group) {
-        let groups = this._groups;
-        if (groups.indexOf(group) !== -1)
-            return;
-        groups.push(group);
-        this._isDirty = true;
-        if (this._dataProvider) {
-            let g2, len, found = false;
-            groups = this._dataProvider._groups;
-            len = groups.length;
-            for (let i = 0; i < len; i++) {
-                g2 = groups[i];
-                if (group._uuid == g2._uuid) {
-                    found = true;
-                    break;
-                }
-            }
-            if (!found)
-                groups.push(group);
-        }
-    }
-
-    /**
-     * 
-     * @param {TabGroupDTO} group 
-     * @returns 
-     */
-    removeTabGroup(group) {
-        let groups = this._groups;
-        let index = groups.indexOf(group);
-        if (index !== -1)
-            groups.splice(index, 1);
-        this._isDirty = true;
-    }
-
-    /**
-     * 
-     * @param {string} uuid 
-     * @returns {?TabGroupDTO}
-     */
-    getTabGroupById(uuid) {
-        let group, groups = this._groups;
-        let len = groups.length;
-        for (let i = 0; i < len; i++) {
-            group = groups[i];
-            if (group._uuid == uuid) {
-                return group;
-            }
-        }
-
-        return group;
-    }
-
-    toJSON() {
-        return {groups: this._groups};
-    }
-};
-
-class TabViewColumn {
-    constructor (id) {
-        this.id = id;
-    }
-};
-
-class TabGroupDTO {
-
-    constructor () {
-        this._uuid;
-        this.name = "";
-        this._viewColumns = null;
-        this._items = [];
-        /** @type {TabGroupLocalStorage} */
-        this._storage = null;
-        this._isDirty = false;
-        this.mtime = null;
-    }
-
-    addItem(item) {
-        let items = this._items;
-        if (items.indexOf(item) !== -1)
-            return;
-        items.push(item);
-        this._isDirty = true;
-        if (this._storage)
-            this._storage._isDirty = true;
-    }
-
-    toJSON() {
-        let viewColumns = this._viewColumns;
-        let tabItems;
-        if (!viewColumns) {
-            tabItems = this._items;
-        } else {
-            let orgItems = this._items;
-            tabItems = [];
-            let len = orgItems.length;
-            for (let i = 0; i < len; i++) {
-                let org = orgItems[i];
-                let cpy = Object.assign({}, org);
-                cpy.viewColumn = viewColumns.indexOf(org.viewColumn);
-                tabItems.push(cpy);
-            }
-        }
-        return {uuid: this._uuid, name: this.name, items: tabItems, viewColumns: this._viewColumns, mtime: (this.mtime && this.mtime instanceof Date ? this.mtime.getTime() : this.mtime) };
-    }
-};
-
-let _delayedWriteId = -1;
-
-function doDelayedWrite() {
-    _delayedWriteId = -1;
-    let dataProvider = Utils._dataProvider;
-    /** @type {TabGroupLocalStorage[]} */
-    let stores = dataProvider._stores;
-    if (stores.length == 0)
-        return;
-    let jsonData;
-    let len = stores.length;
-    for (let i = 0; i < len; i++) {
-        let store = stores[i];
-        let hasdir, filepath = store.dataLocation;
-        if (store._isDirty == false || typeof filepath != "string" || filepath.length == 0)
-            continue;
-
-        try {
-            fs.accessSync(filepath, fs.constants.W_OK | fs.constants.R_OK);
-            hasdir = true;
-        } catch (err) {
-            console.error(err);
-            hasdir = false;
-            if (err.code == "ENOENT") {
-
-            }
-        }
-
-        if (!hasdir) {
-            try {
-                let dirpath = path.dirname(filepath);
-                fs.mkdirSync(dirpath, {recursive: true});
-            } catch (err) {
-                console.error(err);
-            }
-        }
-
-        try {
-            jsonData = JSON.stringify(store, null, 4);
-            fs.writeFileSync(filepath, jsonData, {encoding: 'utf-8'});
-            store._isDirty = false;
-        } catch (err) {
-            console.error(err);
-        }
-    }
-}
-
-function addDelayedWrite() {
-    if (_delayedWriteId !== -1)
-        return;
-    _delayedWriteId = setTimeout(doDelayedWrite, 500);
-}
 
 // use a uuid per group (maybe also per item) so that multiple saves can be stripped away easy.
 function loadTabGroupLocalStorage(filepath) {
@@ -426,25 +60,21 @@ function get_favorites_lists() {
 }
 
 
-function alt_cmd(element) {
-    vscode.window.showErrorMessage('alt_cmd');
-}
-
 function add_to_tab_group(element) {
     /*
     var _a, _b, _c;
-    if (!vscode.window.activeTextEditor) {
-        vscode.window.showErrorMessage('The path of the active document is not available.');
+    if (!window.activeTextEditor) {
+        window.showErrorMessage('The path of the active document is not available.');
     }
     else {
-        let document = vscode.window.activeTextEditor.document.fileName;
+        let document = window.activeTextEditor.document.fileName;
         let isLocalPath = false;
-        if ((_a = vscode.window.activeTextEditor) === null || _a === void 0 ? void 0 : _a.document) {
-            isLocalPath = fs.existsSync(tree_view_1.uriToLocalPath((_c = (_b = vscode.window.activeTextEditor) === null || _b === void 0 ? void 0 : _b.document) === null || _c === void 0 ? void 0 : _c.uri));
+        if ((_a = window.activeTextEditor) === null || _a === void 0 ? void 0 : _a.document) {
+            isLocalPath = fs.existsSync(tree_view.uriToLocalPath((_c = (_b = window.activeTextEditor) === null || _b === void 0 ? void 0 : _b.document) === null || _c === void 0 ? void 0 : _c.uri));
         }
-        // if (vscode.window.activeTextEditor?.document?.uri?.scheme != undefined ||    
+        // if (window.activeTextEditor?.document?.uri?.scheme != undefined ||    
         if (!isLocalPath) {
-            document = decodeURI(vscode.window.activeTextEditor.document.uri.toString());
+            document = decodeURI(window.activeTextEditor.document.uri.toString());
         }
         _add(document);
     }
@@ -454,24 +84,24 @@ function add_to_tab_group(element) {
 function _add(document) {
     let lines = Utils.read_all_lines(Utils.fav_file);
     if (lines.find(x => x == document) != null) {
-        vscode.window.showErrorMessage('The active document is already in the Favorites.');
+        window.showErrorMessage('The active document is already in the Favorites.');
     }
     else {
         lines.push(document);
         Utils.write_all_lines(Utils.fav_file, lines.filter(x => x != ''));
-        vscode_1.commands.executeCommand('tab-session.refresh');
+        commands.executeCommand('tab-session.refresh');
     }
 }
 
 function remove_tab(element) {
     Utils._dataProvider.removeTab(element.context);
-    vscode_1.commands.executeCommand('tab-session.refresh');
+    commands.executeCommand('tab-session.refresh');
     addDelayedWrite();
 }
 
 async function remove_view_column(element) {
 
-    let action = vscode.window.showInformationMessage("Removed tab groups cannot be recovered!", ["Ok", "Cancel"]);
+    let action = window.showInformationMessage("Removed tab groups cannot be recovered!", ["Ok", "Cancel"]);
     // Utils._dataProvider.removeTabGroup(element.context);
     if (action == "Ok") {
 
@@ -481,14 +111,14 @@ async function remove_view_column(element) {
 async function remove_tab_group(element) {
     const ACTION_CANCEL = "Cancel";
     const ACTION_CONFIRM = "Confirm";
-    let action = await vscode.window.showQuickPick([ACTION_CANCEL, ACTION_CONFIRM], {
+    let action = await window.showQuickPick([ACTION_CANCEL, ACTION_CONFIRM], {
         title: "Confirm removal of " + element.context.name,
         canPickMany: false,
     });
 
     if (action == ACTION_CONFIRM) {
         Utils._dataProvider.removeTabGroup(element.context);
-        vscode_1.commands.executeCommand('tab-session.refresh');
+        commands.executeCommand('tab-session.refresh');
         addDelayedWrite();
     }
 }
@@ -503,17 +133,17 @@ function rename_tab_group(element) {
         prompt: "",
         placeHolder: "",
     }
-    vscode.window.showInputBox({
+    window.showInputBox({
         prompt: "Enter a new name for the tab group.",
         placeHolder: "ex.: Test scripts"
     }).then(function(value) {
         let name = value.trim();
         if (name.length == 0) {
-            vscode.window.showErrorMessage("Error: name cannot be blank");
+            window.showErrorMessage("Error: name cannot be blank");
             return;
         }
         tabGroup.name = name;
-        vscode_1.commands.executeCommand('tab-session.refresh');
+        commands.executeCommand('tab-session.refresh');
         tabGroup._storage._isDirty = true;
         addDelayedWrite();
     });
@@ -525,13 +155,13 @@ function duplicate_tab_group(element) {
         prompt: "",
         placeHolder: "",
     }
-    vscode.window.showInputBox({
+    window.showInputBox({
         prompt: "Enter a new name for the duplicate group.",
         placeHolder: "ex.: Test scripts"
     }).then(function(value) {
         let name = value.trim();
         if (name.length == 0) {
-            vscode.window.showErrorMessage("Error: name cannot be blank");
+            window.showErrorMessage("Error: name cannot be blank");
             return;
         }
 
@@ -582,7 +212,7 @@ function duplicate_tab_group(element) {
 
         Utils._dataProvider.defaultStore.addGroup(grpcpy);
 
-        vscode_1.commands.executeCommand('tab-session.refresh');
+        commands.executeCommand('tab-session.refresh');
 
         addDelayedWrite();
     });
@@ -590,20 +220,20 @@ function duplicate_tab_group(element) {
 
 
 function clickOnGroup() {
-    vscode.window.showInformationMessage("Expand the node before selecting the list.");
+    window.showInformationMessage("Expand the node before selecting the list.");
 }
 
 function open(item) {
-    vscode_1.commands.executeCommand('vscode.open', vscode_1.Uri.parse(item.uri));
+    commands.executeCommand('vscode.open', Uri.parse(item.uri));
 }
 
 function open_path(path, newWindow) {
-    // vscode.window.showErrorMessage("About to open :" + path);
+    // window.showErrorMessage("About to open :" + path);
     var _a, _b, _c;
-    let uri = vscode_1.Uri.parse(path);
+    let uri = Uri.parse(path);
     if (!uri.scheme || uri.scheme.length <= 1) {
         // if required it's possible to use `vscode.env.remoteName` to check if remote channel is open 
-        uri = vscode_1.Uri.file(path);
+        uri = Uri.file(path);
     }
     // as for VSCode v1.63.2 these are anomalies/peculiarities of `vscode.openFolder` and `vscode.open`
     // `vscode.open` opens files OK but throws the exception on attempt to open folder
@@ -615,17 +245,17 @@ function open_path(path, newWindow) {
     if (fs.existsSync(uri.fsPath) && fs.lstatSync(uri.fsPath).isDirectory()) {
         let workspace = Utils.get_workspace_file(uri.fsPath);
         if (workspace) { // opening workspace file
-            if (!newWindow && workspace == ((_b = (_a = vscode.workspace) === null || _a === void 0 ? void 0 : _a.workspaceFile) === null || _b === void 0 ? void 0 : _b.fsPath))
-                vscode_1.commands.executeCommand('revealInExplorer', vscode_1.Uri.file(vscode.workspace.workspaceFolders[0].uri.fsPath));
+            if (!newWindow && workspace == ((_b = (_a = workspace) === null || _a === void 0 ? void 0 : _a.workspaceFile) === null || _b === void 0 ? void 0 : _b.fsPath))
+                commands.executeCommand('revealInExplorer', Uri.file(workspace.workspaceFolders[0].uri.fsPath));
             else
-                vscode_1.commands.executeCommand('vscode.openFolder', vscode_1.Uri.file(workspace), newWindow);
+                commands.executeCommand('vscode.openFolder', Uri.file(workspace), newWindow);
         }
         else { // opening folder
-            if (!newWindow && ((_c = vscode.workspace) === null || _c === void 0 ? void 0 : _c.workspaceFolders)) {
-                if (uri.fsPath.includes(vscode.workspace.workspaceFolders[0].uri.fsPath)) {
-                    if (uri.fsPath == vscode.workspace.workspaceFolders[0].uri.fsPath) {
+            if (!newWindow && ((_c = workspace) === null || _c === void 0 ? void 0 : _c.workspaceFolders)) {
+                if (uri.fsPath.includes(workspace.workspaceFolders[0].uri.fsPath)) {
+                    if (uri.fsPath == workspace.workspaceFolders[0].uri.fsPath) {
                         // is already opened folder
-                        vscode_1.commands.executeCommand('revealInExplorer', uri);
+                        commands.executeCommand('revealInExplorer', uri);
                         return;
                     }
                     else {
@@ -634,24 +264,24 @@ function open_path(path, newWindow) {
                             .getConfiguration("tab-session")
                             .get('disableOpeningSubfolderOfLoadedFolder', false);
                         if (disableOpeningSubfolderOfLoadedFolder) {
-                            vscode.window.showErrorMessage("The parent folder is already opened in VSCode.");
+                            window.showErrorMessage("The parent folder is already opened in VSCode.");
                             return;
                         }
                     }
                 }
             }
             if (newWindow)
-                vscode_1.commands.executeCommand('vscode.openFolder', uri, true);
+                commands.executeCommand('vscode.openFolder', uri, true);
             else
-                vscode_1.commands.executeCommand('vscode.openFolder', uri);
+                commands.executeCommand('vscode.openFolder', uri);
         }
     }
     else { // opening file or invalid path (let VSCode report the error)
         // vscode.window.showInformationMessage("Opening: " + uri);
         if (newWindow)
-            vscode_1.commands.executeCommand('vscode.openFolder', uri, true);
+            commands.executeCommand('vscode.openFolder', uri, true);
         else
-            vscode_1.commands.executeCommand('vscode.open', uri);
+            commands.executeCommand('vscode.open', uri);
     }
 }
 
@@ -664,7 +294,7 @@ function new_group() {
         prompt: "Enter a name for the new tab group",
         placeHolder: "ex.: Test scripts",
     };
-    vscode.window.showInputBox(options)
+    window.showInputBox(options)
         .then(value => {
         if (value) {
             let name = value.trim();
@@ -673,7 +303,7 @@ function new_group() {
 
             let dto = Utils.createNewList(name);
 
-            vscode_1.commands.executeCommand('tab-session.refresh');
+            vscode.commands.executeCommand('tab-session.refresh');
 
             addDelayedWrite();
         }
@@ -684,7 +314,7 @@ function new_group_with_current_tabs() {
         prompt: "Enter a name for the new tab group",
         placeHolder: "ex.: Test scripts",
     };
-    vscode.window.showInputBox(options)
+    window.showInputBox(options)
         .then(value => {
         if (value) {
             let name = value.trim();
@@ -705,7 +335,7 @@ function new_group_with_current_tabs() {
             
             let dto = Utils.createNewList(name);
             // copying what we have in vscode
-            let groups = vscode_1.window.tabGroups.all;
+            let groups = window.tabGroups.all;
             let ylen = groups.length;
             for (let y = 0; y < ylen; y++) {
                  let group = groups[y];
@@ -740,7 +370,7 @@ function new_group_with_current_tabs() {
 
             dto._viewColumns = viewColumns;
 
-            vscode_1.commands.executeCommand('tab-session.refresh');
+            commands.executeCommand('tab-session.refresh');
             
             addDelayedWrite();
         }
@@ -748,7 +378,7 @@ function new_group_with_current_tabs() {
 }
 
 function isOpen(uri) {
-    let groups = vscode_1.window.tabGroups.all;
+    let groups = window.tabGroups.all;
     let ylen = groups.length;
     for (let y = 0; y < ylen; y++) {
         let group = groups[y];
@@ -771,7 +401,7 @@ function isOpen(uri) {
 async function open_tab_group(item) {
     // closing other tabs (keeping untitled and non-files)
     let closeTabs = [];
-    let tabGroups = vscode_1.window.tabGroups;
+    let tabGroups = window.tabGroups;
     let groups = tabGroups.all;
     let ylen = groups.length;
     for (let y = 0; y < ylen; y++) {
@@ -801,9 +431,9 @@ async function open_tab_group(item) {
         if (isOpen(newTab.uri))
             continue;
 
-        //await vscode_1.commands.executeCommand('vscode.open', vscode_1.Uri.parse(newTab.uri));
+        //await commands.executeCommand('vscode.open', Uri.parse(newTab.uri));
 
-        let resource = vscode_1.Uri.parse(newTab.uri);
+        let resource = Uri.parse(newTab.uri);
         let viewId = newTab.viewType ? newTab.viewType : "default";
         let viewColumn = newTab.viewColumn ? newTab.viewColumn.id : null;
         let options = {
@@ -812,7 +442,7 @@ async function open_tab_group(item) {
             //preview: null,              // boolean
             preserveFocus: true,        // boolean
         };
-        await vscode_1.commands.executeCommand("vscode.openWith", resource, viewId, options)
+        await commands.executeCommand("vscode.openWith", resource, viewId, options)
     }
     
     return true;
@@ -826,7 +456,7 @@ async function merge_open_tab_group(item) {
         if (isOpen(newTab.uri))
             continue;
 
-        await vscode_1.commands.executeCommand('vscode.open', vscode_1.Uri.parse(newTab.uri));
+        await commands.executeCommand('vscode.open', Uri.parse(newTab.uri));
     }
     
     return true;
@@ -840,9 +470,6 @@ function tab_groups_export_json() {
     let out = JSON.stringify(Utils._tabGroupDataStore, null, 4);
     console.log(out);
 }
-
-exports.TabGroupDTO = TabGroupDTO;
-exports.TabViewColumn = TabViewColumn;
 
 function createDataStoreLocation(filepath) {
 
@@ -866,7 +493,7 @@ function onDidChangeWorkspaceFolders(evt) {
  */
 function initialDataLocation(dataProvider) {
     let firstpath;
-    let folders = vscode.workspace.workspaceFolders;
+    let folders = workspace.workspaceFolders;
     if (folders && folders.length > 0) {
         let dataFiles = [];
         let len = folders.length;
@@ -896,7 +523,7 @@ function initialDataLocation(dataProvider) {
         }
         dataProvider._defaultStorePath = firstpath;
     } else {
-        vscode.workspace.onDidChangeWorkspaceFolders(onDidChangeWorkspaceFolders);
+        workspace.onDidChangeWorkspaceFolders(onDidChangeWorkspaceFolders);
     }
 }
 
@@ -905,69 +532,17 @@ function changeDataLocation() {
 }
 
 function GetCurrentWorkspaceFolder() {
-    let folders = vscode.workspace.workspaceFolders;
+    let folders = workspace.workspaceFolders;
     if (folders && folders.length > 0)
         return folders[0].uri.fsPath;
     else
         return null;
 }
 
-class Utils {
 
-    static _getEditorState(uri) {
-        let states = Utils._editorStates;
-        let len = states.length;
-        for (let i = 0; i < len; i++) {
-            let state = states[i];
-            if (state.uri == uri) {
-                return state;
-            }
-        }
 
-        return null;
-    }
 
-    static createTabObject(uri) {
-        let state, filename = path.basename(uri);
-        let newTab = {name: filename, uri: uri, scheme: null, isPinned: false};
-        state = Utils._getEditorState(uri);
-        if (state) {
-            newTab.visibleRanges = state.visibleRanges;
-        }
-
-        return newTab;
-    }
-
-    static get_workspace_file(folder) {
-        let result = null;
-        fs.readdirSync(folder).forEach(fileName => {
-            if (result == null && fileName.endsWith(".code-workspace"))
-                result = path.join(folder, fileName);
-        });
-        return result;
-    }
-        
-    static createNewList(list_name) {
-        let dto = new TabGroupDTO();
-        dto.name = list_name;
-        dto.mtime = Date.now();
-        dto._uuid = crypto.randomUUID();
-        dto._storage = Utils._dataProvider.defaultStore;
-        Utils._dataProvider.defaultStore.addGroup(dto);
-        return dto;
-    }
-}
-Utils._fav_file = null;
-
-exports.asyncSaveData = function() {
-    addDelayedWrite();
-}
-
-function tab_groups_explicit_save() {
-    addDelayedWrite();
-}
-
-function activate(context) {
+export function activate(context) {
     /** @type {TabGroupDataProvider} */
     let dataProvider;
     let editorStateMap = new Map();
@@ -996,42 +571,41 @@ function activate(context) {
 
     initialDataLocation(dataProvider);
     
-    const treeViewProvider = new tree_view_1.TabGroupTreeProvider(dataProvider);
-    vscode.commands.registerCommand('tab-session.open_new_window', open_in_new_window);
-    vscode.commands.registerCommand('tab-session.open', open);
-    vscode.commands.registerCommand('tab-session.clickOnGroup', clickOnGroup);
-    vscode.commands.registerCommand('tab-session.alt_cmd', alt_cmd);
-    vscode.commands.registerCommand('tab-session.new_group', new_group);
-    vscode.commands.registerCommand('tab-session.new_group_with_current_tabs', new_group_with_current_tabs);
-    vscode.commands.registerCommand('tab-session.open_tab_group', open_tab_group);
-    vscode.commands.registerCommand('tab-session.merge_open_tab_group', merge_open_tab_group);
-    vscode.commands.registerCommand('tab-session.open_view_column', open_view_column);
-    vscode.commands.registerCommand('tab-session.refresh', () => treeViewProvider.refresh(false));
-    vscode.commands.registerCommand('tab-session.refresh_all', () => treeViewProvider.refresh(true));
-    vscode.commands.registerCommand('tab-session.add_to_tab_group', add_to_tab_group);
-    vscode.commands.registerCommand('tab-session.remove_tab', remove_tab);
-    vscode.commands.registerCommand('tab-session.remove_view_column', remove_view_column);
-    vscode.commands.registerCommand('tab-session.remove_tab_group', remove_tab_group);
-    vscode.commands.registerCommand('tab-session.rename_tab_group', rename_tab_group);
-    vscode.commands.registerCommand('tab-session.duplicate_tab_group', duplicate_tab_group);
-    vscode.commands.registerCommand('tab-session.export_json', tab_groups_export_json);    
-    vscode.commands.registerCommand('tab-session.tab_groups_explicit_save', tab_groups_explicit_save);   
-    vscode.workspace.onDidChangeConfiguration(event => {
+    const treeViewProvider = new TabGroupTreeProvider(dataProvider);
+    commands.registerCommand('tab-session.open_new_window', open_in_new_window);
+    commands.registerCommand('tab-session.open', open);
+    commands.registerCommand('tab-session.clickOnGroup', clickOnGroup);
+    commands.registerCommand('tab-session.new_group', new_group);
+    commands.registerCommand('tab-session.new_group_with_current_tabs', new_group_with_current_tabs);
+    commands.registerCommand('tab-session.open_tab_group', open_tab_group);
+    commands.registerCommand('tab-session.merge_open_tab_group', merge_open_tab_group);
+    commands.registerCommand('tab-session.open_view_column', open_view_column);
+    commands.registerCommand('tab-session.refresh', () => treeViewProvider.refresh(false));
+    commands.registerCommand('tab-session.refresh_all', () => treeViewProvider.refresh(true));
+    commands.registerCommand('tab-session.add_to_tab_group', add_to_tab_group);
+    commands.registerCommand('tab-session.remove_tab', remove_tab);
+    commands.registerCommand('tab-session.remove_view_column', remove_view_column);
+    commands.registerCommand('tab-session.remove_tab_group', remove_tab_group);
+    commands.registerCommand('tab-session.rename_tab_group', rename_tab_group);
+    commands.registerCommand('tab-session.duplicate_tab_group', duplicate_tab_group);
+    commands.registerCommand('tab-session.export_json', tab_groups_export_json);    
+    commands.registerCommand('tab-session.tab_groups_explicit_save', tab_groups_explicit_save);   
+    workspace.onDidChangeConfiguration(event => {
         if (event.affectsConfiguration("tab-session.singleListMode")) {
             treeViewProvider.refresh(false);
         }
     });
 
-    vscode.window.createTreeView("tab-session-explorer-view", {
+    window.createTreeView("tab-session-explorer-view", {
         treeDataProvider: treeViewProvider,
         dragAndDropController: treeViewProvider,
     });
 
-    vscode.window.onDidChangeActiveTextEditor(function(evt) {
+    window.onDidChangeActiveTextEditor(function(evt) {
         //console.log(evt);
     });
 
-    vscode.window.onDidChangeTextEditorViewColumn(function(evt) {
+    window.onDidChangeTextEditorViewColumn(function(evt) {
         //console.log(evt);
     });
     
@@ -1055,7 +629,7 @@ function activate(context) {
         return arr;
     }
 
-    vscode.window.onDidChangeTextEditorVisibleRanges(function(evt) {
+    window.onDidChangeTextEditorVisibleRanges(function(evt) {
         let state, uri, textDocument, editor = evt.textEditor;
         textDocument = editor.document;
         uri = textDocument.uri.toString();
@@ -1072,8 +646,3 @@ function activate(context) {
 
 
 }
-
-exports.activate = activate;
-exports.Utils = Utils;
-
-//# sourceMappingURL=extension.js.map
