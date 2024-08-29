@@ -1,3 +1,3 @@
 # TabGroups - VSCode Extension
 
-A manager for groups of tabs.
+A manager vscode tabs in sets of groups, and allows save/restore a selected range of files (similar to tab groups in web browsers)
